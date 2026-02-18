@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal actual fun Modifier.extraPointerInput(scrollState: VicoScrollState): Modifier {
+  if (!scrollState.scrollEnabled) return this
   var scrollJob by rememberWrappedValue<Job?>(null)
   val coroutineScope = rememberCoroutineScope()
   val animationSpec = rememberSplineBasedDecay<Float>()

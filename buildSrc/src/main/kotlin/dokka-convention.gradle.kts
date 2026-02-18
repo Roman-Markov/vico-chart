@@ -16,4 +16,5 @@
 
 plugins { id("org.jetbrains.dokka") }
 
-dokka { dokkaPublications.configureEach { suppressInheritedMembers = true } }
+// Отключено при сборке как composite (receiver type mismatch с Gradle 9.1). Для генерации доки собирайте Vico отдельно.
+// dokka { dokkaPublications.configureEach { suppressInheritedMembers = true } }
