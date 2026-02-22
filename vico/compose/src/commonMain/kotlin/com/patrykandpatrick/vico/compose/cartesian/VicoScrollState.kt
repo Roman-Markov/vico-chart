@@ -43,6 +43,7 @@ public class VicoScrollState {
   private val autoScrollCondition: AutoScrollCondition
   private val autoScrollAnimationSpec: AnimationSpec<Float>
   private val _value: MutableFloatState
+  private val _minValue = mutableFloatStateOf(0f)
   private val _maxValue = mutableFloatStateOf(0f)
   private var initialScrollHandled: Boolean
   private var context: CartesianMeasuringContext? = null
@@ -66,12 +67,21 @@ public class VicoScrollState {
 
   private val isScrollInProgress = snapshotFlow { scrollableState.isScrollInProgress }
 
+  /** The minimum scroll value (in pixels). */
+  public var minValue: Float
+    get() = _minValue.floatValue
+    internal set(newMinValue) {
+      if (newMinValue == minValue) return
+      _minValue.floatValue = newMinValue
+      value = value
+    }
+
   /** The current scroll value (in pixels). */
   public var value: Float
     get() = _value.floatValue
     private set(newValue) {
       val oldValue = value
-      _value.floatValue = newValue.coerceIn(0f.rangeWith(maxValue))
+      _value.floatValue = newValue.coerceIn(minValue.rangeWith(maxValue))
       if (value != oldValue) consumedXDeltas.tryEmit(oldValue - value)
     }
 
@@ -147,7 +157,9 @@ public class VicoScrollState {
     this.context = context
     this.layerDimensions = layerDimensions
     this.bounds = bounds
-    maxValue = context.getMaxScrollDistance(bounds.width, layerDimensions)
+    val rawMax = context.getMaxScrollDistance(bounds.width, layerDimensions)
+    minValue = 0f
+    maxValue = rawMax
     if (!initialScrollHandled) {
       value = initialScroll.getValue(context, layerDimensions, bounds, maxValue)
       initialScrollHandled = true
