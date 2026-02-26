@@ -165,8 +165,12 @@ public class VicoZoomState {
         val transformationAxisX =
           scroll + centroidX - bounds.left - layerDimensions.unscalableStartPadding
         val zoomedTransformationAxisX = transformationAxisX * (value / oldValue)
+//        _pendingScroll.emit(
+//          Scroll.Absolute.pixels(scroll + zoomedTransformationAxisX - transformationAxisX) to
+//            maxScrollDistance
+//        )
         _pendingScroll.emit(
-          Scroll.Absolute.pixels(scroll + zoomedTransformationAxisX - transformationAxisX) to
+          Scroll.Absolute.pixels(zoomedTransformationAxisX - centroidX) to
             maxScrollDistance
         )
       }
