@@ -101,12 +101,20 @@ public class VicoZoomState {
     overridden = false,
   )
 
-  /** Triggers a zoom. */
-  public suspend fun zoom(zoom: Zoom) {
+  /**
+   * Triggers a zoom.
+   *
+   * @param zoom the target zoom (factor or derived from content/bounds).
+   * @param centroidXRatio horizontal position of the zoom pivot as a fraction of canvas width:
+   *   `0f` = left edge, `0.5f` = center, `1f` = right edge. The point at this position stays fixed
+   *   during the zoom; scroll is adjusted so that the content under this point does not move.
+   */
+  public suspend fun zoom(zoom: Zoom, centroidXRatio: Float = 0.5f) {
     withUpdated { context, layerDimensions, bounds ->
       val newValue = zoom.getValue(context, layerDimensions, bounds)
       if (newValue != value) {
-        zoom(newValue / value, context.canvasSize.center.x) { scroll }
+//        zoom(newValue / value, context.canvasSize.center.x) { scroll }
+        zoom(newValue / value, context.canvasSize.width * centroidXRatio) { scroll }
       }
     }
   }
