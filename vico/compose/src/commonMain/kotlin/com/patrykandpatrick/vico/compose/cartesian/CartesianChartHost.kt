@@ -21,6 +21,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.patrykandpatrick.vico.compose.cartesian.data.*
@@ -32,6 +33,13 @@ import com.patrykandpatrick.vico.compose.common.Defaults.CHART_HEIGHT
 import com.patrykandpatrick.vico.compose.common.data.ExtraStore
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+
+private const val VICO_SWITCH_DEBUG_LOGS = true
+
+private inline fun vicoSwitchDebugLog(message: () -> String) {
+  if (VICO_SWITCH_DEBUG_LOGS) println(message())
+}
 
 /**
  * Displays a [CartesianChart].
@@ -138,6 +146,19 @@ internal fun CartesianChartHostImpl(
   val coroutineScope = rememberCoroutineScope()
   var lastHandledModel by remember { ValueWrapper(model) }
   val layerDimensions = remember { MutableCartesianLayerDimensions() }
+  var debugLastMaxValue by remember { mutableFloatStateOf(Float.NaN) }
+  var debugFrameCounter by remember { mutableIntStateOf(0) }
+  var debugLastPreparedWidth by remember { mutableFloatStateOf(Float.NaN) }
+  var debugLastPreparedLayerBounds by remember { mutableStateOf(Rect.Zero) }
+  var debugLastPreparedXSpacing by remember { mutableFloatStateOf(Float.NaN) }
+  var debugLastDrawScroll by remember { mutableFloatStateOf(Float.NaN) }
+  var debugLastDrawMax by remember { mutableFloatStateOf(Float.NaN) }
+  var debugLastDrawZoom by remember { mutableFloatStateOf(Float.NaN) }
+  var debugLastSeriesCount by remember { mutableIntStateOf(-1) }
+  var debugLastSeriesFirstX by remember { mutableStateOf(Double.NaN) }
+  var debugLastSeriesLastX by remember { mutableStateOf(Double.NaN) }
+  var debugLastSeriesMinY by remember { mutableStateOf(Double.NaN) }
+  var debugLastSeriesMaxY by remember { mutableStateOf(Double.NaN) }
 
   val onInteraction =
     remember(chart, layerDimensions, scrollState, ranges) {
@@ -185,7 +206,13 @@ internal fun CartesianChartHostImpl(
 
   LaunchedEffect(zoomState, scrollState) {
     zoomState.pendingScroll.collect { (scroll, maxValue) ->
+      vicoSwitchDebugLog {
+        "VICO pendingScroll before: scrollValue=${scrollState.value} maxValue=${scrollState.maxValue} incomingMax=$maxValue"
+      }
       scrollState.scroll(scroll, maxValue)
+      vicoSwitchDebugLog {
+        "VICO pendingScroll after: scrollValue=${scrollState.value} maxValue=${scrollState.maxValue}"
+      }
       onViewportChange()
     }
   }
@@ -213,17 +240,73 @@ internal fun CartesianChartHostImpl(
         )
   ) {
     if (size.isEmpty()) return@Canvas
+    debugFrameCounter += 1
     measuringContext.value.canvasSize = size
 
     layerDimensions.clear()
     chart.prepare(measuringContext.value, layerDimensions)
+    val preparedChanged =
+      debugLastPreparedWidth.isNaN() ||
+        abs(size.width - debugLastPreparedWidth) >= 0.5f ||
+        chart.layerBounds != debugLastPreparedLayerBounds ||
+        debugLastPreparedXSpacing.isNaN() ||
+        abs(layerDimensions.xSpacing - debugLastPreparedXSpacing) >= 0.01f
+    if (preparedChanged) {
+      vicoSwitchDebugLog {
+        "VICO frame=$debugFrameCounter prepared: width=${size.width} layerBounds=${chart.layerBounds} xSpacing=${layerDimensions.xSpacing}"
+      }
+      debugLastPreparedWidth = size.width
+      debugLastPreparedLayerBounds = chart.layerBounds
+      debugLastPreparedXSpacing = layerDimensions.xSpacing
+    }
 
     if (chart.layerBounds.isEmpty) return@Canvas
 
+    val candlestickModel = model.models.filterIsInstance<CandlestickCartesianLayerModel>().firstOrNull()
+    val seriesCount = candlestickModel?.series?.size ?: 0
+    val seriesFirstX = candlestickModel?.minX ?: Double.NaN
+    val seriesLastX = candlestickModel?.maxX ?: Double.NaN
+    val seriesMinY = candlestickModel?.minY ?: Double.NaN
+    val seriesMaxY = candlestickModel?.maxY ?: Double.NaN
+    val modelDataChanged =
+      seriesCount != debugLastSeriesCount ||
+        seriesFirstX != debugLastSeriesFirstX ||
+        seriesLastX != debugLastSeriesLastX ||
+        seriesMinY != debugLastSeriesMinY ||
+        seriesMaxY != debugLastSeriesMaxY
+    if (modelDataChanged) {
+      vicoSwitchDebugLog {
+        "VICO frame=$debugFrameCounter modelData: count=$seriesCount firstX=$seriesFirstX lastX=$seriesLastX " +
+          "minY=$seriesMinY maxY=$seriesMaxY"
+      }
+      debugLastSeriesCount = seriesCount
+      debugLastSeriesFirstX = seriesFirstX
+      debugLastSeriesLastX = seriesLastX
+      debugLastSeriesMinY = seriesMinY
+      debugLastSeriesMaxY = seriesMaxY
+    }
+
+    val maxBeforeUpdate = scrollState.maxValue
+    val scrollBeforeUpdate = scrollState.value
     zoomState.update(measuringContext.value, layerDimensions, chart.layerBounds, scrollState.value)
     scrollState.update(measuringContext.value, chart.layerBounds, layerDimensions)
+    if (
+      model != lastHandledModel ||
+        debugLastMaxValue.isNaN() ||
+        abs(scrollState.maxValue - debugLastMaxValue) >= 0.5f
+    ) {
+      vicoSwitchDebugLog {
+        "VICO frame=$debugFrameCounter updated: scrollBefore=$scrollBeforeUpdate maxBefore=$maxBeforeUpdate " +
+          "scrollNow=${scrollState.value} maxNow=${scrollState.maxValue} zoom=${zoomState.value} modelChanged=${model != lastHandledModel}"
+      }
+      debugLastMaxValue = scrollState.maxValue
+    }
 
     if (model != lastHandledModel) {
+      vicoSwitchDebugLog {
+        "VICO frame=$debugFrameCounter modelChanged: triggering autoScroll " +
+          "previousWidth=${previousModel?.width} currentWidth=${model.width}"
+      }
       coroutineScope.launch { scrollState.autoScroll(model, previousModel) }
       lastHandledModel = model
     }
@@ -239,6 +322,21 @@ internal fun CartesianChartHostImpl(
         MutableDrawScope(this),
       )
 
+    val drawChanged =
+      debugLastDrawScroll.isNaN() ||
+        debugLastDrawMax.isNaN() ||
+        debugLastDrawZoom.isNaN() ||
+        abs(scrollState.value - debugLastDrawScroll) >= 0.5f ||
+        abs(scrollState.maxValue - debugLastDrawMax) >= 0.5f ||
+        abs(zoomState.value - debugLastDrawZoom) >= 1e-4f
+    if (drawChanged) {
+      vicoSwitchDebugLog {
+        "VICO frame=$debugFrameCounter draw: scroll=${scrollState.value} max=${scrollState.maxValue} zoom=${zoomState.value}"
+      }
+      debugLastDrawScroll = scrollState.value
+      debugLastDrawMax = scrollState.maxValue
+      debugLastDrawZoom = zoomState.value
+    }
     chart.draw(drawingContext)
     measuringContext.value.cacheStore.purge()
   }

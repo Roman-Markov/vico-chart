@@ -34,7 +34,19 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 
 /**
- * Houses information on a [CartesianChart]’s scroll value. Allows for scroll customization and
+ * Called synchronously inside the draw pass when [VicoScrollState.maxValue] changes.
+ * Returning a non-null value sets [VicoScrollState.value] in the same frame, before drawing.
+ */
+public fun interface ScrollUpdateDelegate {
+  public fun onScrollBoundsChanged(
+    oldMaxValue: Float,
+    newMaxValue: Float,
+    currentValue: Float,
+  ): Float?
+}
+
+/**
+ * Houses information on a [CartesianChart]'s scroll value. Allows for scroll customization and
  * programmatic scrolling.
  */
 public class VicoScrollState {
@@ -52,6 +64,9 @@ public class VicoScrollState {
   internal val scrollEnabled: Boolean
   internal val consumedXDeltas = MutableSharedFlow<Float>(extraBufferCapacity = 1)
   internal val unconsumedXDeltas = MutableSharedFlow<Float>(extraBufferCapacity = 1)
+
+  /** Optional delegate for synchronous scroll adjustment when scroll bounds change. */
+  public var scrollUpdateDelegate: ScrollUpdateDelegate? = null
 
   internal val scrollableState = ScrollableState { delta ->
     val oldValue = value
@@ -113,7 +128,7 @@ public class VicoScrollState {
   }
 
   /**
-   * Houses information on a [CartesianChart]’s scroll value. Allows for scroll customization and
+   * Houses information on a [CartesianChart]'s scroll value. Allows for scroll customization and
    * programmatic scrolling.
    *
    * @param scrollEnabled whether scroll is enabled.
@@ -157,12 +172,17 @@ public class VicoScrollState {
     this.context = context
     this.layerDimensions = layerDimensions
     this.bounds = bounds
+    val oldMax = maxValue
     val rawMax = context.getMaxScrollDistance(bounds.width, layerDimensions)
     minValue = 0f
     maxValue = rawMax
     if (!initialScrollHandled) {
       value = initialScroll.getValue(context, layerDimensions, bounds, maxValue)
       initialScrollHandled = true
+    } else if (oldMax != maxValue) {
+      scrollUpdateDelegate
+        ?.onScrollBoundsChanged(oldMax, maxValue, value)
+        ?.let { value = it }
     }
   }
 
