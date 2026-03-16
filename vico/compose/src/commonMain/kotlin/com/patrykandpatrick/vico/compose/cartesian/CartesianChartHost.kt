@@ -41,6 +41,14 @@ private inline fun vicoSwitchDebugLog(message: () -> String) {
   if (VICO_SWITCH_DEBUG_LOGS) println(message())
 }
 
+/** Per-frame chart metrics emitted by [CartesianChartHost]. */
+public data class ChartFrameMetrics(
+  val scroll: Float,
+  val maxScroll: Float,
+  val zoom: Float,
+  val chartBoundsWidth: Float,
+)
+
 /**
  * Displays a [CartesianChart].
  *
@@ -55,6 +63,8 @@ private inline fun vicoSwitchDebugLog(message: () -> String) {
  * @param animateIn whether to run an initial animation when the [CartesianChartHost] enters
  *   composition. The animation is skipped for previews.
  * @param placeholder shown when no [CartesianChartModel] is available.
+ * @param onScrollMetricsUpdated called after [VicoScrollState.update] and before drawing.
+ * @param onFrameCommitted called after drawing and cache purge.
  */
 @Composable
 public fun CartesianChartHost(
@@ -66,6 +76,8 @@ public fun CartesianChartHost(
   animationSpec: AnimationSpec<Float>? = defaultCartesianDiffAnimationSpec,
   animateIn: Boolean = true,
   placeholder: @Composable BoxScope.() -> Unit = {},
+  onScrollMetricsUpdated: ((ChartFrameMetrics) -> Unit)? = null,
+  onFrameCommitted: ((ChartFrameMetrics) -> Unit)? = null,
 ) {
   val mutableRanges = remember { MutableCartesianChartRanges() }
   val modelWrapper by modelProducer.collectAsState(chart, animationSpec, animateIn, mutableRanges)
@@ -81,6 +93,8 @@ public fun CartesianChartHost(
         ranges,
         previousModel,
         extraStore,
+        onScrollMetricsUpdated,
+        onFrameCommitted,
       )
     } else {
       placeholder()
@@ -99,6 +113,8 @@ public fun CartesianChartHost(
  *   customization and programmatic scrolling.
  * @param zoomState houses information on the [CartesianChart]’s zoom factor. Allows for zoom
  *   customization.
+ * @param onScrollMetricsUpdated called after [VicoScrollState.update] and before drawing.
+ * @param onFrameCommitted called after drawing and cache purge.
  */
 @Composable
 public fun CartesianChartHost(
@@ -107,6 +123,8 @@ public fun CartesianChartHost(
   modifier: Modifier = Modifier,
   scrollState: VicoScrollState = rememberVicoScrollState(),
   zoomState: VicoZoomState = rememberDefaultVicoZoomState(scrollState.scrollEnabled),
+  onScrollMetricsUpdated: ((ChartFrameMetrics) -> Unit)? = null,
+  onFrameCommitted: ((ChartFrameMetrics) -> Unit)? = null,
 ) {
   val ranges = remember { MutableCartesianChartRanges() }
   remember(chart, model) {
@@ -114,7 +132,15 @@ public fun CartesianChartHost(
     chart.updateRanges(ranges, model)
   }
   CartesianChartHostBox(modifier) {
-    CartesianChartHostImpl(chart, model, scrollState, zoomState, ranges.toImmutable())
+    CartesianChartHostImpl(
+      chart,
+      model,
+      scrollState,
+      zoomState,
+      ranges.toImmutable(),
+      onScrollMetricsUpdated = onScrollMetricsUpdated,
+      onFrameCommitted = onFrameCommitted,
+    )
   }
 }
 
@@ -127,6 +153,8 @@ internal fun CartesianChartHostImpl(
   ranges: CartesianChartRanges,
   previousModel: CartesianChartModel? = null,
   extraStore: ExtraStore = ExtraStore.Empty,
+  onScrollMetricsUpdated: ((ChartFrameMetrics) -> Unit)? = null,
+  onFrameCommitted: ((ChartFrameMetrics) -> Unit)? = null,
 ) {
   var markerX by rememberSaveable { mutableStateOf<Double?>(null) }
   var lastAcceptedInteraction by
@@ -290,6 +318,14 @@ internal fun CartesianChartHostImpl(
     val scrollBeforeUpdate = scrollState.value
     zoomState.update(measuringContext.value, layerDimensions, chart.layerBounds, scrollState.value)
     scrollState.update(measuringContext.value, chart.layerBounds, layerDimensions)
+    onScrollMetricsUpdated?.invoke(
+      ChartFrameMetrics(
+        scroll = scrollState.value,
+        maxScroll = scrollState.maxValue,
+        zoom = zoomState.value,
+        chartBoundsWidth = chart.layerBounds.width,
+      )
+    )
     if (
       model != lastHandledModel ||
         debugLastMaxValue.isNaN() ||
@@ -339,6 +375,14 @@ internal fun CartesianChartHostImpl(
     }
     chart.draw(drawingContext)
     measuringContext.value.cacheStore.purge()
+    onFrameCommitted?.invoke(
+      ChartFrameMetrics(
+        scroll = scrollState.value,
+        maxScroll = scrollState.maxValue,
+        zoom = zoomState.value,
+        chartBoundsWidth = chart.layerBounds.width,
+      )
+    )
   }
 }
 
