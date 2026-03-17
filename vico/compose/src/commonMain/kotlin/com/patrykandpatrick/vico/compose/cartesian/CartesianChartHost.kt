@@ -35,7 +35,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-private const val VICO_SWITCH_DEBUG_LOGS = true
+private const val VICO_SWITCH_DEBUG_LOGS = false
 
 private inline fun vicoSwitchDebugLog(message: () -> String) {
   if (VICO_SWITCH_DEBUG_LOGS) println(message())

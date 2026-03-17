@@ -109,6 +109,11 @@ public class VicoScrollState {
       value = value
     }
 
+  /** Sets scroll value synchronously in host callbacks before chart draw. */
+  public fun setValueFromHost(px: Float) {
+    value = px
+  }
+
   internal constructor(
     scrollEnabled: Boolean,
     initialScroll: Scroll.Absolute,
