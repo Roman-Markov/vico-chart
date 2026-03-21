@@ -36,9 +36,14 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 private const val VICO_SWITCH_DEBUG_LOGS = false
+private const val VICO_MAX_SCROLL_SOURCE_DIAG_LOGS = false
 
 private inline fun vicoSwitchDebugLog(message: () -> String) {
   if (VICO_SWITCH_DEBUG_LOGS) println(message())
+}
+
+private inline fun vicoMaxSourceDiagLog(message: () -> String) {
+  if (VICO_MAX_SCROLL_SOURCE_DIAG_LOGS) println(message())
 }
 
 /** Per-frame chart metrics emitted by [CartesianChartHost]. */
@@ -47,6 +52,7 @@ public data class ChartFrameMetrics(
   val maxScroll: Float,
   val zoom: Float,
   val chartBoundsWidth: Float,
+  val rangesXStep: Double,
 )
 
 /**
@@ -63,6 +69,7 @@ public data class ChartFrameMetrics(
  * @param animateIn whether to run an initial animation when the [CartesianChartHost] enters
  *   composition. The animation is skipped for previews.
  * @param placeholder shown when no [CartesianChartModel] is available.
+ * @param shouldDrawDelegate decides whether to draw current frame.
  * @param onScrollMetricsUpdated called after [VicoScrollState.update] and before drawing.
  * @param onFrameCommitted called after drawing and cache purge.
  */
@@ -76,6 +83,7 @@ public fun CartesianChartHost(
   animationSpec: AnimationSpec<Float>? = defaultCartesianDiffAnimationSpec,
   animateIn: Boolean = true,
   placeholder: @Composable BoxScope.() -> Unit = {},
+  shouldDrawDelegate: (() -> Boolean)? = null,
   onScrollMetricsUpdated: ((ChartFrameMetrics) -> Unit)? = null,
   onFrameCommitted: ((ChartFrameMetrics) -> Unit)? = null,
 ) {
@@ -93,6 +101,7 @@ public fun CartesianChartHost(
         ranges,
         previousModel,
         extraStore,
+        shouldDrawDelegate,
         onScrollMetricsUpdated,
         onFrameCommitted,
       )
@@ -113,6 +122,7 @@ public fun CartesianChartHost(
  *   customization and programmatic scrolling.
  * @param zoomState houses information on the [CartesianChart]’s zoom factor. Allows for zoom
  *   customization.
+ * @param shouldDrawDelegate decides whether to draw current frame.
  * @param onScrollMetricsUpdated called after [VicoScrollState.update] and before drawing.
  * @param onFrameCommitted called after drawing and cache purge.
  */
@@ -123,6 +133,7 @@ public fun CartesianChartHost(
   modifier: Modifier = Modifier,
   scrollState: VicoScrollState = rememberVicoScrollState(),
   zoomState: VicoZoomState = rememberDefaultVicoZoomState(scrollState.scrollEnabled),
+  shouldDrawDelegate: (() -> Boolean)? = null,
   onScrollMetricsUpdated: ((ChartFrameMetrics) -> Unit)? = null,
   onFrameCommitted: ((ChartFrameMetrics) -> Unit)? = null,
 ) {
@@ -138,6 +149,7 @@ public fun CartesianChartHost(
       scrollState,
       zoomState,
       ranges.toImmutable(),
+      shouldDrawDelegate = shouldDrawDelegate,
       onScrollMetricsUpdated = onScrollMetricsUpdated,
       onFrameCommitted = onFrameCommitted,
     )
@@ -153,6 +165,7 @@ internal fun CartesianChartHostImpl(
   ranges: CartesianChartRanges,
   previousModel: CartesianChartModel? = null,
   extraStore: ExtraStore = ExtraStore.Empty,
+  shouldDrawDelegate: (() -> Boolean)? = null,
   onScrollMetricsUpdated: ((ChartFrameMetrics) -> Unit)? = null,
   onFrameCommitted: ((ChartFrameMetrics) -> Unit)? = null,
 ) {
@@ -187,6 +200,10 @@ internal fun CartesianChartHostImpl(
   var debugLastSeriesLastX by remember { mutableStateOf(Double.NaN) }
   var debugLastSeriesMinY by remember { mutableStateOf(Double.NaN) }
   var debugLastSeriesMaxY by remember { mutableStateOf(Double.NaN) }
+  var debugLastRangesMinX by remember { mutableStateOf(Double.NaN) }
+  var debugLastRangesMaxX by remember { mutableStateOf(Double.NaN) }
+  var debugLastRangesXStep by remember { mutableStateOf(Double.NaN) }
+  var debugMaxSourceLogsLeft by remember { mutableIntStateOf(16) }
 
   val onInteraction =
     remember(chart, layerDimensions, scrollState, ranges) {
@@ -316,16 +333,47 @@ internal fun CartesianChartHostImpl(
 
     val maxBeforeUpdate = scrollState.maxValue
     val scrollBeforeUpdate = scrollState.value
+    val ranges = measuringContext.value.ranges
+    val xLength = ranges.xLength
+    val xStep = ranges.xStep
+    val xColumns = if (xStep != 0.0) (xLength / xStep).toFloat() else Float.NaN
+    val scalableContentWidth = layerDimensions.xSpacing * xColumns + layerDimensions.scalablePadding
+    val contentWidth = scalableContentWidth + layerDimensions.unscalablePadding
+    val computedMaxScrollDistance = measuringContext.value.getMaxScrollDistance(chart.layerBounds.width, layerDimensions)
+    val rangeShapeChanged =
+      ranges.minX != debugLastRangesMinX ||
+        ranges.maxX != debugLastRangesMaxX ||
+        ranges.xStep != debugLastRangesXStep
+    debugLastRangesMinX = ranges.minX
+    debugLastRangesMaxX = ranges.maxX
+    debugLastRangesXStep = ranges.xStep
     zoomState.update(measuringContext.value, layerDimensions, chart.layerBounds, scrollState.value)
     scrollState.update(measuringContext.value, chart.layerBounds, layerDimensions)
-    onScrollMetricsUpdated?.invoke(
-      ChartFrameMetrics(
-        scroll = scrollState.value,
-        maxScroll = scrollState.maxValue,
-        zoom = zoomState.value,
-        chartBoundsWidth = chart.layerBounds.width,
+    val maxChangedNow = abs(scrollState.maxValue - maxBeforeUpdate) >= 0.5f
+    if (debugMaxSourceLogsLeft > 0 && (maxChangedNow || rangeShapeChanged)) {
+      vicoMaxSourceDiagLog {
+        "[VicoMaxDiag] frame=$debugFrameCounter maxBefore=$maxBeforeUpdate maxAfter=${scrollState.maxValue} " +
+          "scrollBefore=$scrollBeforeUpdate scrollAfter=${scrollState.value} " +
+          "chartWidth=${chart.layerBounds.width} contentWidth=$contentWidth scalableContentWidth=$scalableContentWidth " +
+          "xSpacing=${layerDimensions.xSpacing} scalablePadding=${layerDimensions.scalablePadding} " +
+          "unscalablePadding=${layerDimensions.unscalablePadding} " +
+          "rangesMinX=${ranges.minX} rangesMaxX=${ranges.maxX} rangesXStep=${ranges.xStep} " +
+          "xLength=$xLength xColumns=$xColumns computedMax=$computedMaxScrollDistance " +
+          "rangeShapeChanged=$rangeShapeChanged maxChanged=$maxChangedNow"
+      }
+      debugMaxSourceLogsLeft -= 1
+    }
+    if (onScrollMetricsUpdated != null) {
+      onScrollMetricsUpdated.invoke(
+        ChartFrameMetrics(
+          scroll = scrollState.value,
+          maxScroll = scrollState.maxValue,
+          zoom = zoomState.value,
+          chartBoundsWidth = chart.layerBounds.width,
+          rangesXStep = ranges.xStep,
+        )
       )
-    )
+    }
     if (
       model != lastHandledModel ||
         debugLastMaxValue.isNaN() ||
@@ -373,14 +421,17 @@ internal fun CartesianChartHostImpl(
       debugLastDrawMax = scrollState.maxValue
       debugLastDrawZoom = zoomState.value
     }
-    chart.draw(drawingContext)
-    measuringContext.value.cacheStore.purge()
+    if (shouldDrawDelegate?.invoke() != false) {
+      chart.draw(drawingContext)
+      measuringContext.value.cacheStore.purge()
+    }
     onFrameCommitted?.invoke(
       ChartFrameMetrics(
         scroll = scrollState.value,
         maxScroll = scrollState.maxValue,
         zoom = zoomState.value,
         chartBoundsWidth = chart.layerBounds.width,
+        rangesXStep = ranges.xStep,
       )
     )
   }
