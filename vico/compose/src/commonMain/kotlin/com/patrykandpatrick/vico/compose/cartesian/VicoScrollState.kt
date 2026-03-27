@@ -109,8 +109,14 @@ public class VicoScrollState {
       value = value
     }
 
-  /** Sets scroll value synchronously in host callbacks before chart draw. */
-  public fun setValueFromHost(px: Float) {
+  /** Sets scroll value synchronously in host callbacks before chart draw.
+   *  [ensureMaxAtLeast] — if non-null and greater than current [maxValue],
+   *  expands [maxValue] before assigning [px], preventing premature clamping
+   *  when Vico's async ranges update hasn't propagated yet. */
+  public fun setValueFromHost(px: Float, ensureMaxAtLeast: Float? = null) {
+    if (ensureMaxAtLeast != null && ensureMaxAtLeast > maxValue) {
+      _maxValue.floatValue = ensureMaxAtLeast
+    }
     value = px
   }
 
