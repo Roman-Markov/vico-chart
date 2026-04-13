@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+// WHY: Включено для расследования рывка вьюпорта при wheel-zoom + live OHLC (см. cryptobot ZOOM_SCROLL_RACE).
 private const val VICO_SWITCH_DEBUG_LOGS = false
 private const val VICO_MAX_SCROLL_SOURCE_DIAG_LOGS = false
 
@@ -203,7 +204,8 @@ internal fun CartesianChartHostImpl(
   var debugLastRangesMinX by remember { mutableStateOf(Double.NaN) }
   var debugLastRangesMaxX by remember { mutableStateOf(Double.NaN) }
   var debugLastRangesXStep by remember { mutableStateOf(Double.NaN) }
-  var debugMaxSourceLogsLeft by remember { mutableIntStateOf(16) }
+  // WHY: При ZOOM_SCROLL_RACE нужно больше сэмплов maxScroll/scroll на смене модели, чем 16 кадров.
+  var debugMaxSourceLogsLeft by remember { mutableIntStateOf(256) }
 
   val onInteraction =
     remember(chart, layerDimensions, scrollState, ranges) {
